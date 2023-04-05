@@ -74,7 +74,7 @@ func loginAndEnsurePluginVersion(ctx context.Context, fs afero.Fs, cfg *cloudcfg
 	if err != nil {
 		return "", "", false, fmt.Errorf("unable to determine managed plugin path: %w", err)
 	}
-	token, err = auth.LoadFlow(ctx, fs, cfg)
+	token, err = auth.LoadFlow(ctx, fs, cfg, auth.NewAuth0Provider())
 	if err != nil {
 		return "", "", false, fmt.Errorf("unable to load the cloud token: %w", err)
 	}

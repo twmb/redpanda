@@ -117,7 +117,7 @@ func NewClient(endpoint Endpoint) *Client {
 	return cl
 }
 
-// tokenResponse is a response for an OAuth 2 access token request. The struct
+// TokenResponse is a response for an OAuth 2 access token request. The struct
 // follows the RFC6749 definition, for documentation on fields, see sections
 // 4.2.2 and 4.2.2.1:
 //
@@ -126,13 +126,13 @@ func NewClient(endpoint Endpoint) *Client {
 // For a higher-level description, see:
 //
 //	https://www.oauth.com/oauth2-servers/access-tokens/access-token-response/
-type tokenResponse struct {
+type TokenResponse struct {
 	AccessToken string `json:"access_token"`
 	TokenType   string `json:"token_type"`
 	ExpiresIn   int    `json:"expires_in"`
 }
 
-type getAuthURLResponse struct {
+type GetAuthURLResponse struct {
 	DeviceCode              string `json:"device_code"`
 	UserCode                string `json:"user_code"`
 	VerificationURL         string `json:"verification_uri"`
@@ -156,7 +156,7 @@ func (t *tokenResponseError) Error() string {
 	return t.Err
 }
 
-func (cl *Client) GetToken(ctx context.Context, clientID, clientSecret string) (tokenResponse, error) {
+func (cl *Client) GetToken(ctx context.Context, clientID, clientSecret string) (TokenResponse, error) {
 	path := "/oauth/token"
 	form := httpapi.Values(
 		"grant_type", "client_credentials",
@@ -165,11 +165,11 @@ func (cl *Client) GetToken(ctx context.Context, clientID, clientSecret string) (
 		"audience", cl.endpoint.Audience,
 	)
 
-	var response tokenResponse
+	var response TokenResponse
 	return response, cl.httpCl.PostForm(ctx, path, nil, form, &response)
 }
 
-func (cl *Client) GetDeviceToken(ctx context.Context, authAppClientID, deviceCode string) (token tokenResponse, err error) {
+func (cl *Client) GetDeviceToken(ctx context.Context, authAppClientID, deviceCode string) (token TokenResponse, err error) {
 	path := "/oauth/token"
 	body := struct {
 		ClientID   string `json:"client_id"`
@@ -177,35 +177,44 @@ func (cl *Client) GetDeviceToken(ctx context.Context, authAppClientID, deviceCod
 		GrantType  string `json:"grant_type"`
 	}{authAppClientID, deviceCode, "urn:ietf:params:oauth:grant-type:device_code"}
 
-	var response tokenResponse
+	var response TokenResponse
 	return response, cl.httpCl.Post(ctx, path, nil, "application/json", body, &response)
 }
 
-func (cl *Client) InitDeviceAuthorization(ctx context.Context, clientID string) (token getAuthURLResponse, err error) {
+func (cl *Client) InitDeviceAuthorization(ctx context.Context, clientID string) (token GetAuthURLResponse, err error) {
 	path := "/oauth/device/code"
 	body := struct {
 		ClientID string `json:"client_id"`
 	}{clientID}
 
-	var response getAuthURLResponse
+	var response GetAuthURLResponse
 	return response, cl.httpCl.Post(ctx, path, nil, "application/json", body, &response)
 }
 
-func (cl *Client) WaitForToken(ctx context.Context, deviceCode string, authAppClientID string, interval int) (token string, err error) {
+func (cl *Client) WaitForDeviceToken(ctx context.Context, deviceCode string, authAppClientID string, interval int) (token TokenResponse, err error) {
 	ticker := time.NewTicker(time.Duration(interval) * time.Second)
 	defer ticker.Stop()
+
+	// Current Cloud API handler have a fixed expiration time, once we implement
+	// this using Auth0 we should change this to the `expiresAt` field from the
+	// deviceCode response.
+	expiresAt := time.Now().Add(6 * time.Minute)
+	var response TokenResponse
 	for range ticker.C {
-		token, err := cl.GetDeviceToken(ctx, authAppClientID, deviceCode)
+		response, err = cl.GetDeviceToken(ctx, authAppClientID, deviceCode)
 		if err == nil {
-			return token.AccessToken, nil
+			return response, nil
 		}
 		if rte := (*tokenResponseError)(nil); errors.As(err, &rte) {
 			switch rte.Err {
 			case "authorization_pending", "slow_down":
 			default:
-				return "", fmt.Errorf("unable to request authorization token: %v, please try again or contact support", rte.Err)
+				return TokenResponse{}, fmt.Errorf("unable to request authorization token: %v, please try again or contact support", rte.Err)
 			}
 		}
+		if time.Now().After(expiresAt) {
+			return TokenResponse{}, fmt.Errorf("failed to retrieve token after %v seconds: timed out waiting for response: %v", expiresAt.String(), err)
+		}
 	}
-	return "", fmt.Errorf("unexpected error while waiting for token: %v", err)
+	return TokenResponse{}, fmt.Errorf("unexpected error while waiting for token: %v", err)
 }
