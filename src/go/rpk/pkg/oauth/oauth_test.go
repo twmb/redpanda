@@ -1,4 +1,4 @@
-package auth
+package oauth
 
 import (
 	"context"
@@ -8,8 +8,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/redpanda-data/redpanda/src/go/rpk/pkg/auth0"
 	"github.com/redpanda-data/redpanda/src/go/rpk/pkg/cli/cmd/cloud/cloudcfg"
+	"github.com/redpanda-data/redpanda/src/go/rpk/pkg/oauth/providers/auth0"
 	"github.com/stretchr/testify/require"
 )
 
