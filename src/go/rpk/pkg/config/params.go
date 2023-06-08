@@ -817,6 +817,8 @@ func (p *Params) Logger() *zap.Logger {
 	return p.logger
 }
 
+// readFile reads the file at path, returns the absolute path to the file,
+// the file content and an error if something happened while reading the file.
 func readFile(fs afero.Fs, path string) (string, []byte, error) {
 	abs, err := filepath.Abs(path)
 	if err != nil {
@@ -829,6 +831,8 @@ func readFile(fs afero.Fs, path string) (string, []byte, error) {
 	return abs, file, err
 }
 
+// backcompatOldCloudYaml loads rpk in the default path and merge the old
+// __cloud.yaml (if it exists) into rpk.yaml.
 func (*Params) backcompatOldCloudYaml(fs afero.Fs) error {
 	def, err := DefaultRpkYamlPath()
 	if err != nil {
@@ -932,20 +936,42 @@ func (p *Params) readRpkConfig(fs afero.Fs, c *Config) error {
 		// as the file location for both of these.
 		c.rpkYaml.fileLocation = abs
 		c.rpkYamlActual.fileLocation = abs
+
+		// The user might try to specify a profile via --config, so we
+		// read from the default location
+		abs, file, err = readFile(fs, def)
+		if errors.Is(err, afero.ErrFileNotFound) {
+			return nil 			// it's neither the yaml location and the rpk file does not exist
+		}
+		ok, err := unmarshallRpk(c, p, file, def, abs)
+		if err != nil {
+			return err
+		}
+		if ok {
+			c.rpkYaml.CurrentProfile = p.ConfigFlag
+		}
 		return nil
 	}
+	// We don't care here if we were able to unmarshall the rpk, we just return
+	// the error that might be nil.
+	_, err = unmarshallRpk(c, p, file, path, abs)
+	return err
+}
+
+func unmarshallRpk(c *Config, p *Params, file []byte, path, abs string) (bool, error) {
+	def, _ := DefaultRpkYamlPath()
 	before := c.rpkYaml
 	if err := yaml.Unmarshal(file, &c.rpkYaml); err != nil {
-		return fmt.Errorf("unable to yaml decode %s: %v", path, err)
+		return false, fmt.Errorf("unable to yaml decode %s: %v", path, err)
 	}
 	if c.rpkYaml.Version < 1 {
 		if p.ConfigFlag == "" {
-			return fmt.Errorf("%s is not in the expected rpk.yaml format", def)
+			return false, fmt.Errorf("%s is not in the expected rpk.yaml format", def)
 		}
 		c.rpkYaml = before // this config is not an rpk.yaml; preserve our defaults
-		return nil
+		return false, nil // we return false since we didn't unmarshal an actual rpk.yaml
 	} else if c.rpkYaml.Version > 1 {
-		return fmt.Errorf("%s is using a newer rpk.yaml format than we understand, please upgrade rpk", def)
+		return false, fmt.Errorf("%s is using a newer rpk.yaml format than we understand, please upgrade rpk", def)
 	}
 	yaml.Unmarshal(file, &c.rpkYamlActual)
 
@@ -954,7 +980,7 @@ func (p *Params) readRpkConfig(fs afero.Fs, c *Config) error {
 	c.rpkYamlActual.fileLocation = abs
 	c.rpkYaml.fileRaw = file
 	c.rpkYamlActual.fileRaw = file
-	return nil
+	return true, nil
 }
 
 func (p *Params) readRedpandaConfig(fs afero.Fs, c *Config) error {
